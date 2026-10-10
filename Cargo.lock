@@ -1251,6 +1251,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9e340e012a1bf4935f5282ed1436d1489548e8f72308207ea5df0e23d2d03f8"
 dependencies = [
  "clap_builder",
+ "clap_derive",
 ]
 
 [[package]]
@@ -1263,6 +1264,18 @@ dependencies = [
  "anstyle",
  "clap_lex",
  "strsim 0.11.1",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.5.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a0b5487afeab2deb2ff4e03a807ad1a03ac532ff5a2cee5d86884440c7f7671"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2 1.0.93",
+ "quote 1.0.36",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -7188,6 +7201,28 @@ dependencies = [
  "xkbcommon-dl",
  "xxhash-rust",
  "zstd",
+]
+
+[[package]]
+name = "rustdesk-pf"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base",
+ "bytes",
+ "clap 4.5.53",
+ "env_logger 0.11.6",
+ "futures",
+ "futures-util",
+ "hbb_common",
+ "lazy_static",
+ "log",
+ "protobuf",
+ "serde 1.0.228",
+ "serde_json 1.0.118",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

@@ -1,0 +1,30 @@
+[package]
+name = "rustdesk-pf"
+version = "0.1.0"
+edition = "2021"
+description = "Headless RustDesk port-forward CLI (no GUI)"
+authors = ["Cross2pro"]
+publish = false
+
+[[bin]]
+name = "rustdesk-pf"
+path = "src/main.rs"
+
+[dependencies]
+hbb_common = { path = "../../libs/hbb_common" }
+# message.proto lives in base; base pulls wayland on Linux (NOT gtk/glib).
+base = { path = "../../libs/base" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1.44", features = ["full"] }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+protobuf = { version = "3.7", features = ["with-bytes"] }
+bytes = "1.10"
+futures = "0.3"
+futures-util = "0.3"
+uuid = { version = "1.16", features = ["v4"] }
+lazy_static = "1.5"
+tokio-util = { version = "0.7", features = ["codec", "compat"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
