@@ -110,7 +110,7 @@ async fn listen_one(
             match establish(&peer_id, force_relay).await {
                 Ok(stream) => {
                     if let Err(e) =
-                        session::run_controller_port_forward(stream, sock, &password, &host, port)
+                        session::run_controller_port_forward(stream, sock, &password, &peer_id, &host, port)
                             .await
                     {
                         log::error!("forward session ended: {e:#}");

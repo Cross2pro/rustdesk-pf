@@ -171,6 +171,7 @@ pub async fn run_controller_port_forward(
     mut stream: Stream,
     local: TcpStream,
     password: &str,
+    peer_id: &str,
     remote_host: &str,
     remote_port: i32,
 ) -> Result<()> {
@@ -183,8 +184,9 @@ pub async fn run_controller_port_forward(
         match msg_in.union {
             Some(message::Union::Hash(hash)) => {
                 let pw = hash_password(password, &hash.salt, &hash.challenge);
+                // Controlled rejects with "Offline" unless username == peer's id.
                 let mut lr = LoginRequest {
-                    username: String::new(), // filled with peer id by upstream; optional
+                    username: peer_id.to_owned(),
                     password: pw.into(),
                     my_id: Config::get_id(),
                     my_name: hbb_common::whoami::username(),
