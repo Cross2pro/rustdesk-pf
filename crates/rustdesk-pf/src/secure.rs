@@ -36,7 +36,7 @@ pub fn rs_key() -> String {
     }
 }
 
-fn create_symmetric_key_msg(their_pk_b: [u8; 32]) -> (Bytes, Bytes, secretbox::Key) {
+pub fn create_symmetric_key_msg_pub(their_pk_b: [u8; 32]) -> (Bytes, Bytes, secretbox::Key) {
     let their_pk_b = box_::PublicKey(their_pk_b);
     let (our_pk_b, out_sk_b) = box_::gen_keypair();
     let key = secretbox::gen_key();
@@ -50,7 +50,7 @@ pub async fn secure_tcp(conn: &mut Stream, key: &str) -> Result<()> {
     let Some(rs_pk) = get_rs_pk(key) else {
         bail!("invalid rendezvous public key");
     };
-    let first = match timeout(READ_TIMEOUT, conn.next()).await {
+    let first = match timeout(2_000, conn.next()).await {
         Ok(v) => v,
         Err(_) => {
             log::warn!("no key exchange from rendezvous within timeout; continuing");
@@ -84,7 +84,7 @@ pub async fn secure_tcp(conn: &mut Stream, key: &str) -> Result<()> {
                         }
                     }
                     let (asymmetric_value, symmetric_value, key) =
-                        create_symmetric_key_msg(their_pk_b);
+                        create_symmetric_key_msg_pub(their_pk_b);
                     let picked = hbb_common::tcp::kx_version_for(ex.version);
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_key_exchange(KeyExchange {

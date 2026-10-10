@@ -1,12 +1,14 @@
-#![allow(dead_code)]
 //! Headless RustDesk port-forward CLI.
-//! Reuses hbb_common (protocol / config / crypto) and base::message_proto.
 //! No gtk, scrap, enigo, clipboard, sciter, or pulse.
 
+#![allow(dead_code)]
+
 mod connect;
-mod secure;
 mod forward;
+mod peer;
+mod secure;
 mod serve;
+mod session;
 mod setup;
 
 use anyhow::Result;
@@ -23,27 +25,20 @@ struct Cli {
 enum Cmd {
     /// Headless controlled side: register with hbbs, accept port-forward sessions.
     Serve {
-        /// Config directory (sets hbb_common APP_DIR). Default: platform config dir for app "rustdesk-pf".
         #[arg(long)]
         config: Option<String>,
-        /// Permanent password (stored hashed). If omitted, an existing one is kept or auto-generated.
         #[arg(long)]
         password: Option<String>,
-        /// Rendezvous / ID server host[:port] (default port 21116).
         #[arg(long)]
         server: Option<String>,
-        /// Relay server host[:port] (optional; hbbs may provide one).
         #[arg(long)]
         relay: Option<String>,
-        /// Public key of the ID/relay server (base64).
         #[arg(long)]
         key: Option<String>,
     },
-    /// Controller side: open local listeners and tunnel to peer via RustDesk link.
+    /// Controller: local -L listeners tunneled via RustDesk link.
     Connect {
-        /// Peer RustDesk ID.
         peer_id: String,
-        /// Local forward, OpenSSH-style: [bind:]lport:host:rport (repeatable).
         #[arg(short = 'L', long = "local", required = true)]
         local: Vec<String>,
         #[arg(long)]
@@ -56,11 +51,10 @@ enum Cmd {
         relay: Option<String>,
         #[arg(long)]
         key: Option<String>,
-        /// Force relay (skip hole punch).
+        /// Force relay (skip hole punch). Recommended for first tests.
         #[arg(long)]
         force_relay: bool,
     },
-    /// Print local ID / password / rendezvous settings.
     Id {
         #[arg(long)]
         config: Option<String>,

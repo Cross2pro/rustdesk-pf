@@ -1,12 +1,19 @@
-//! Controller side: local -L listeners and peer tunnel.
-//!
-//! Milestone 1: real local TCP accept loop; peer punch/relay + login stubbed
-//! (next milestone wires PunchHoleRequest / RequestRelay + PortForward login).
+//! Controller: RequestRelay (and PunchHoleRequest) then Hash/Login/PortForward.
 
+use crate::{peer, secure, session};
 use anyhow::{bail, Context, Result};
-use hbb_common::config::Config;
+use hbb_common::{
+    config::{Config, CONNECT_TIMEOUT, READ_TIMEOUT, RELAY_PORT, RENDEZVOUS_PORT},
+    protobuf::Message as _,
+    rendezvous_proto::*,
+    socket_client::{self, connect_tcp},
+    Stream,
+};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use uuid::Uuid;
+
+type Rmsg = RendezvousMessage;
 
 #[derive(Debug, Clone)]
 pub struct Forward {
@@ -15,7 +22,6 @@ pub struct Forward {
     pub remote_port: u16,
 }
 
-/// Parse OpenSSH-style `[bind_addr:]lport:host:rport`.
 pub fn parse_forwards(specs: &[String]) -> Result<Vec<Forward>> {
     let mut out = Vec::new();
     for s in specs {
@@ -25,7 +31,6 @@ pub fn parse_forwards(specs: &[String]) -> Result<Vec<Forward>> {
 }
 
 fn parse_one(s: &str) -> Result<Forward> {
-    // Split from the right: host may contain colons (IPv6) only if bracketed — keep simple for now.
     let parts: Vec<&str> = s.split(':').collect();
     let (bind_ip, lport, host, rport) = match parts.as_slice() {
         [lport, host, rport] => ("127.0.0.1", *lport, *host, *rport),
@@ -52,13 +57,13 @@ pub async fn run(
         bail!("at least one -L mapping required");
     }
     let password = password.unwrap_or("").to_string();
+    if password.is_empty() {
+        bail!("--password is required");
+    }
     let rendezvous = Config::get_rendezvous_server();
     log::info!(
         "connect peer={peer_id} rendezvous={rendezvous} force_relay={force_relay} mappings={mappings:?}"
     );
-    if password.is_empty() {
-        log::warn!("no --password given; login will fail until provided");
-    }
 
     let mut handles = Vec::new();
     for m in mappings {
@@ -70,7 +75,6 @@ pub async fn run(
             }
         }));
     }
-    // Wait forever (or until all listeners die).
     for h in handles {
         let _ = h.await;
     }
@@ -80,25 +84,226 @@ pub async fn run(
 async fn listen_one(
     m: Forward,
     peer_id: String,
-    _password: String,
+    password: String,
     force_relay: bool,
 ) -> Result<()> {
     let listener = TcpListener::bind(m.bind).await?;
     log::info!(
-        "listening on {} -> {}:{} via peer {peer_id} (force_relay={force_relay})",
+        "listening on {} -> {}:{} via peer {peer_id}",
         m.bind,
         m.remote_host,
         m.remote_port
     );
     loop {
         let (sock, addr) = listener.accept().await?;
-        log::info!(
-            "accepted {addr}; peer session for {}:{} not yet implemented — closing",
-            m.remote_host,
-            m.remote_port
-        );
-        // TODO: PunchHoleRequest / RequestRelay → secure peer Stream →
-        // Hash/LoginRequest{PortForward{host,port}} → forward::run_forward(sock, stream)
-        drop(sock);
+        log::info!("accepted {addr}; establishing session…");
+        let peer_id = peer_id.clone();
+        let password = password.clone();
+        let host = m.remote_host.clone();
+        let port = m.remote_port as i32;
+        tokio::spawn(async move {
+            match establish(&peer_id, force_relay).await {
+                Ok(stream) => {
+                    if let Err(e) =
+                        session::run_controller_port_forward(stream, sock, &password, &host, port)
+                            .await
+                    {
+                        log::error!("forward session ended: {e:#}");
+                    }
+                }
+                Err(e) => log::error!("establish failed: {e:#}"),
+            }
+        });
     }
+}
+
+async fn establish(peer_id: &str, force_relay: bool) -> Result<Stream> {
+    let key = secure::rs_key();
+    let mut rendezvous = Config::get_rendezvous_server();
+    if rendezvous.is_empty() {
+        bail!("no rendezvous server");
+    }
+    rendezvous = socket_client::check_port(rendezvous, RENDEZVOUS_PORT);
+
+    // Prefer relay for reliability (same machine / NAT). PunchHoleRequest still tried when not forced.
+    if force_relay {
+        return request_relay(peer_id, &rendezvous, &key).await;
+    }
+
+    match punch_then_maybe_relay(peer_id, &rendezvous, &key).await {
+        Ok(s) => Ok(s),
+        Err(e) => {
+            log::warn!("punch failed ({e:#}); falling back to relay");
+            request_relay(peer_id, &rendezvous, &key).await
+        }
+    }
+}
+
+async fn punch_then_maybe_relay(peer_id: &str, rendezvous: &str, key: &str) -> Result<Stream> {
+    let mut socket = connect_tcp(rendezvous, CONNECT_TIMEOUT).await?;
+    let _ = secure::secure_tcp(&mut socket, key).await;
+
+    let mut msg_out = Rmsg::new();
+    msg_out.set_punch_hole_request(PunchHoleRequest {
+        id: peer_id.to_owned(),
+        licence_key: key.to_owned(),
+        conn_type: ConnType::PORT_FORWARD.into(),
+        version: peer::version().to_owned(),
+        force_relay: false,
+        ..Default::default()
+    });
+    socket.send(&msg_out).await?;
+    log::info!("sent PunchHoleRequest to {peer_id}");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
+    loop {
+        if std::time::Instant::now() > deadline {
+            bail!("punch timeout");
+        }
+        let Some(Ok(bytes)) = socket.next_timeout(READ_TIMEOUT).await else {
+            continue;
+        };
+        if bytes.is_empty() {
+            continue;
+        }
+        let msg = Rmsg::parse_from_bytes(&bytes)?;
+        match msg.union {
+            Some(rendezvous_message::Union::PunchHoleResponse(ph)) => {
+                if let Ok(f) = ph.failure.enum_value() { log::warn!("PunchHoleResponse failure={f:?}"); } if !ph.other_failure.is_empty() {
+                    // Failure is an enum in newer protos
+                    log::warn!("PunchHoleResponse failure={:?}", ph.failure);
+                }
+                let signed_pk: Vec<u8> = ph.pk.into();
+                let peer_addr = hbb_common::AddrMangle::decode(&ph.socket_addr);
+                log::info!("PunchHoleResponse peer={peer_addr:?}");
+                if peer_addr.port() > 0 {
+                    match connect_tcp(format!("{}", peer_addr), CONNECT_TIMEOUT).await {
+                        Ok(mut conn) => {
+                            peer::secure_connection_controller(peer_id, &signed_pk, key, &mut conn)
+                                .await?;
+                            return Ok(conn);
+                        }
+                        Err(e) => {
+                            log::warn!("direct connect failed: {e:#}");
+                            if !ph.relay_server.is_empty() {
+                                return finish_relay(
+                                    peer_id,
+                                    &ph.relay_server,
+                                    &Uuid::new_v4().to_string(),
+                                    key,
+                                    &signed_pk,
+                                )
+                                .await;
+                            }
+                            bail!("direct failed and no relay");
+                        }
+                    }
+                }
+                if !ph.relay_server.is_empty() {
+                    return request_relay_with_server(peer_id, rendezvous, &ph.relay_server, key)
+                        .await;
+                }
+            }
+            Some(rendezvous_message::Union::RelayResponse(rr)) => {
+                let signed_pk: Vec<u8> = rr.pk().to_vec();
+                return finish_relay(peer_id, &rr.relay_server, &rr.uuid, key, &signed_pk).await;
+            }
+            other => log::debug!("rendezvous: {other:?}"),
+        }
+    }
+}
+
+async fn request_relay(peer_id: &str, rendezvous: &str, key: &str) -> Result<Stream> {
+    let relay = {
+        let r = Config::get_option("relay-server");
+        if r.is_empty() {
+            socket_client::increase_port(rendezvous, 1)
+        } else {
+            r
+        }
+    };
+    request_relay_with_server(peer_id, rendezvous, &relay, key).await
+}
+
+async fn request_relay_with_server(
+    peer_id: &str,
+    rendezvous: &str,
+    relay_server: &str,
+    key: &str,
+) -> Result<Stream> {
+    log::info!("connecting to hbbs {rendezvous} for relay…");
+    let mut socket = connect_tcp(rendezvous, CONNECT_TIMEOUT).await?;
+    log::info!("hbbs tcp up; key-exchange (may skip)…");
+    let _ = secure::secure_tcp(&mut socket, key).await;
+    let uuid = Uuid::new_v4().to_string();
+    let relay_server = socket_client::check_port(relay_server, RELAY_PORT);
+    let mut msg_out = Rmsg::new();
+    msg_out.set_request_relay(RequestRelay {
+        id: peer_id.to_owned(),
+        uuid: uuid.clone(),
+        relay_server: relay_server.clone(),
+        secure: true,
+        licence_key: key.to_owned(),
+        conn_type: ConnType::PORT_FORWARD.into(),
+        ..Default::default()
+    });
+    socket.send(&msg_out).await?;
+    log::info!("hbbs connected; sent RequestRelay uuid={uuid} relay={relay_server}");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(18);
+    let mut signed_pk = Vec::new();
+    loop {
+        if std::time::Instant::now() > deadline {
+            bail!("relay response timeout");
+        }
+        let Some(Ok(bytes)) = socket.next_timeout(3000).await else {
+            continue;
+        };
+        if bytes.is_empty() {
+            continue;
+        }
+        let msg = Rmsg::parse_from_bytes(&bytes)?;
+        if let Some(rendezvous_message::Union::RelayResponse(rr)) = msg.union {
+            if !rr.refuse_reason.is_empty() {
+                bail!("relay refused: {}", rr.refuse_reason);
+            }
+            signed_pk = rr.pk().to_vec();
+            let rs = if rr.relay_server.is_empty() {
+                relay_server.clone()
+            } else {
+                rr.relay_server
+            };
+            let uid = if rr.uuid.is_empty() {
+                uuid.clone()
+            } else {
+                rr.uuid
+            };
+            drop(socket);
+            return finish_relay(peer_id, &rs, &uid, key, &signed_pk).await;
+        }
+    }
+}
+
+async fn finish_relay(
+    peer_id: &str,
+    relay_server: &str,
+    uuid: &str,
+    key: &str,
+    signed_pk: &[u8],
+) -> Result<Stream> {
+    let relay = socket_client::check_port(relay_server, RELAY_PORT);
+    log::info!("connecting to relay {relay} uuid={uuid}");
+    let mut conn = connect_tcp(relay, CONNECT_TIMEOUT).await?;
+    let mut msg_out = Rmsg::new();
+    msg_out.set_request_relay(RequestRelay {
+        licence_key: key.to_owned(),
+        id: peer_id.to_owned(),
+        uuid: uuid.to_owned(),
+        conn_type: ConnType::PORT_FORWARD.into(),
+        ..Default::default()
+    });
+    log::info!("relay RequestRelay sent licence_key_len={}", key.len());
+    conn.send(&msg_out).await?;
+    peer::secure_connection_controller(peer_id, signed_pk, key, &mut conn).await?;
+    Ok(conn)
 }
