@@ -1,182 +1,174 @@
-<p align="center">
-  <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
-  <a href="#raw-steps-to-build">Build</a> •
-  <a href="#how-to-build-with-docker">Docker</a> •
-  <a href="#file-structure">Structure</a> •
-  <a href="#screenshots">Screenshots</a><br>
-  [<a href="docs/README-UA.md">Українська</a>] | [<a href="docs/README-CS.md">česky</a>] | [<a href="docs/README-ZH.md">中文</a>] | [<a href="docs/README-HU.md">Magyar</a>] | [<a href="docs/README-ES.md">Español</a>] | [<a href="docs/README-FA.md">فارسی</a>] | [<a href="docs/README-FR.md">Français</a>] | [<a href="docs/README-DE.md">Deutsch</a>] | [<a href="docs/README-PL.md">Polski</a>] | [<a href="docs/README-ID.md">Indonesian</a>] | [<a href="docs/README-FI.md">Suomi</a>] | [<a href="docs/README-ML.md">മലയാളം</a>] | [<a href="docs/README-JP.md">日本語</a>] | [<a href="docs/README-NL.md">Nederlands</a>] | [<a href="docs/README-IT.md">Italiano</a>] | [<a href="docs/README-RU.md">Русский</a>] | [<a href="docs/README-PTBR.md">Português (Brasil)</a>] | [<a href="docs/README-EO.md">Esperanto</a>] | [<a href="docs/README-KR.md">한국어</a>] | [<a href="docs/README-AR.md">العربي</a>] | [<a href="docs/README-VN.md">Tiếng Việt</a>] | [<a href="docs/README-DA.md">Dansk</a>] | [<a href="docs/README-GR.md">Ελληνικά</a>] | [<a href="docs/README-TR.md">Türkçe</a>] | [<a href="docs/README-NO.md">Norsk</a>] | [<a href="docs/README-RO.md">Română</a>]<br>
-  <b>We need your help to translate this README, <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">RustDesk UI</a> and <a href="https://github.com/rustdesk/doc.rustdesk.com">RustDesk Doc</a> to your native language</b>
-</p>
+# rustdesk-pf — 无界面的 RustDesk TCP 端口转发
 
-> [!Caution]
-> **Misuse Disclaimer:** <br>
-> The developers of RustDesk do not condone or support any unethical or illegal use of this software. Misuse, such as unauthorized access, control or invasion of privacy, is strictly against our guidelines. The authors are not responsible for any misuse of the application.
+`rustdesk-pf` 是从 [RustDesk](https://github.com/rustdesk/rustdesk) 中抽出来的一个命令行程序（crate `crates/rustdesk-pf`），只做 **TCP 端口转发**。它跟 RustDesk 用同一套 rendezvous / relay / 登录协议和加密（NaCl 密钥交换），没有 GUI、X11/Wayland、音频、剪贴板或屏幕采集，所以能直接跑在普通 Linux 服务器上。
 
+- **连接方式**：先试 TCP 打洞 / 同局域网直连，不通就自动走中继（hbbr）。
+- **只出不进**：被控端只发起出站连接，放在校园网、公司 NAT 后面也不需要开放入站端口。
+- **兼容官方客户端**：官方 RustDesk 客户端的「TCP 隧道 / 端口转发」可以直接连 `rustdesk-pf serve`。
 
-Chat with us: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
+子命令：
 
-[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Advanced%20Features-blue)](https://rustdesk.com/pricing.html)
+| 命令 | 作用 |
+|---|---|
+| `serve` | 被控端：在 ID 服务器（hbbs）注册 ID，接受官方客户端或 `rustdesk-pf connect` 发起的端口转发，可转发到本机能访问的任意 `host:port`（如 `127.0.0.1:22` 或局域网其它机器） |
+| `connect` | 控制端：类似 `ssh -L`，在本地监听端口，每个连进来的 TCP 连接各开一条隧道到对端 |
+| `login` | 登录 API（`POST /api/login`），保存 `access_token` |
+| `id` | 打印本机 ID 和生效的配置 |
 
-Yet another remote desktop solution, written in Rust. Works out of the box with no configuration required. You have full control of your data, with no concerns about security. You can use our rendezvous/relay server, [set up your own](https://rustdesk.com/server), or [write your own rendezvous/relay server](https://github.com/rustdesk/rustdesk-server-demo).
+## 快速开始
 
-![image](https://user-images.githubusercontent.com/71636191/171661982-430285f0-2e12-4b1d-9957-4a58e375304d.png)
+```bash
+# 编译（不需要 gtk/glib/xdo/pulse）
+cargo build -p rustdesk-pf --release
+install -m755 target/release/rustdesk-pf /usr/local/bin/
 
-RustDesk welcomes contribution from everyone. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for help getting started.
+# 被控端（服务器）
+export RUSTDESK_PF_SERVER=203.0.113.10:21116 RUSTDESK_PF_KEY=<服务器公钥> \
+       RUSTDESK_PF_PASSWORD=<长随机设备密码>
+rustdesk-pf serve            # 日志里出现 id=... 和 RegisterPk OK
 
-[**FAQ**](https://github.com/rustdesk/rustdesk/wiki/FAQ)
-
-[**BINARY DOWNLOAD**](https://github.com/rustdesk/rustdesk/releases)
-
-[**NIGHTLY BUILD**](https://github.com/rustdesk/rustdesk/releases/tag/nightly)
-
-[<img src="https://f-droid.org/badge/get-it-on.png"
-    alt="Get it on F-Droid"
-    height="80">](https://f-droid.org/en/packages/com.carriez.flutter_hbb)
-[<img src="https://flathub.org/api/badge?svg&locale=en"
-    alt="Get it on Flathub"
-    height="80">](https://flathub.org/apps/com.rustdesk.RustDesk)
-
-## Dependencies
-
-Desktop versions use Flutter or Sciter (deprecated) for GUI. This tutorial is for Sciter only, since it is easier and more friendly to start. Check out our [CI](https://github.com/rustdesk/rustdesk/blob/master/.github/workflows/flutter-build.yml) for building the Flutter version.
-
-Please download Sciter dynamic library yourself.
-
-[Windows](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.win/x64/sciter.dll) |
-[Linux](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/libsciter-gtk.so) |
-[macOS](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.osx/libsciter.dylib)
-
-## Raw Steps to build
-
-- Prepare your Rust development env and C++ build env
-
-- Install [vcpkg](https://github.com/microsoft/vcpkg), and set `VCPKG_ROOT` env variable correctly
-
-  - Windows: vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
-  - Linux/macOS: vcpkg install libvpx libyuv opus aom
-
-- run `cargo run`
-
-## [Build](https://rustdesk.com/docs/en/dev/build/)
-
-## How to Build on Linux
-
-### Ubuntu 18 (Debian 10)
-
-```sh
-sudo apt install -y zip g++ gcc git curl wget nasm yasm libgtk-3-dev clang libxcb-randr0-dev libxdo-dev \
-        libxfixes-dev libxcb-shape0-dev libxcb-xfixes0-dev libasound2-dev libpulse-dev cmake make \
-        libclang-dev ninja-build libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+# 控制端（你的电脑）
+export RUSTDESK_PF_SERVER=203.0.113.10:21116 RUSTDESK_PF_KEY=<服务器公钥> \
+       RUSTDESK_PF_PEER_PASSWORD=<设备密码>
+rustdesk-pf connect <ID> -L 127.0.0.1:2222:127.0.0.1:22
+ssh -p 2222 <user>@127.0.0.1
 ```
 
-### openSUSE Tumbleweed
+## 配置 / 环境变量
 
-```sh
-sudo zypper install gcc-c++ git curl wget nasm yasm gcc gtk3-devel clang libxcb-devel libXfixes-devel cmake alsa-lib-devel gstreamer-devel gstreamer-plugins-base-devel xdotool-devel
+每个参数都有对应的环境变量，部署时建议全部写进权限 600 的 env 文件，不要放在命令行里。
+
+| 参数 | 环境变量 | 含义 |
+|---|---|---|
+| `--config` | `RUSTDESK_PF_CONFIG` | 状态目录（ID、密钥对、密码哈希、token） |
+| `--server` | `RUSTDESK_PF_SERVER` | ID 服务器 `host[:port]` |
+| `--relay` | `RUSTDESK_PF_RELAY` | 中继 `host[:port]`（默认 ID 端口 +1） |
+| `--key` | `RUSTDESK_PF_KEY` | 服务器公钥 |
+| `--password`（serve） | `RUSTDESK_PF_PASSWORD` | 本机固定设备密码 |
+| `--password`（connect） | `RUSTDESK_PF_PEER_PASSWORD` | 对端设备密码 |
+| `--api` | `RUSTDESK_PF_API` | API 地址 |
+| `--api-host` | `RUSTDESK_PF_API_HOST` | `--api` 用 IP 时的 Host 头 |
+| `--user` | `RUSTDESK_PF_ACCOUNT_USER` | API 账号 |
+| `--account-password` | `RUSTDESK_PF_ACCOUNT_PASSWORD` | API 密码 |
+| `--token` | `RUSTDESK_PF_TOKEN` | 已有的 access_token |
+
+日志输出到 stderr（默认 `RUST_LOG=info`，排查用 `debug`），systemd 下由 journald 收集。示例配置见 `deploy/rustdesk-pf.env.example`。
+
+## connect 用法
+
+```bash
+# 服务商要求登录账号时（报错 "please log in"）：
+export RUSTDESK_PF_API=https://api.example.com:21114 RUSTDESK_PF_ACCOUNT_USER=me \
+       RUSTDESK_PF_ACCOUNT_PASSWORD=...
+rustdesk-pf connect 123456789 -L 127.0.0.1:2222:127.0.0.1:22   # ID 中间带空格也可以
 ```
 
-### Fedora 28 (CentOS 8)
+- `-L` 可以写多次；目标可以是对端能访问的任意主机，例如 `-L 13389:192.168.1.50:3389`。
+- 每个本地连接一条独立隧道，同时开多个 `ssh` / `scp` 互不影响。
 
-```sh
-sudo yum -y install gcc-c++ git curl wget nasm yasm gcc gtk3-devel clang libxcb-devel libxdo-devel libXfixes-devel pulseaudio-libs-devel cmake alsa-lib-devel gstreamer1-devel gstreamer1-plugins-base-devel
+`~/.ssh/config` 示例：
+
+```
+Host campus
+    HostName 127.0.0.1
+    Port 2222
+    User me
+    # 让 rustdesk-pf connect 常驻（tmux / systemd --user），或按需启动：
+    # ProxyCommand sh -c 'pgrep -f "rustdesk-pf connect" >/dev/null || (rustdesk-pf connect 123456789 -L 127.0.0.1:2222:127.0.0.1:22 >/tmp/pf.log 2>&1 &); sleep 3; exec nc %h %p'
 ```
 
-### Arch (Manjaro)
+## 用官方 RustDesk 客户端连接
 
-```sh
-sudo pacman -Syu --needed unzip git cmake gcc curl wget yasm nasm zip make pkg-config clang gtk3 xdotool libxcb libxfixes alsa-lib pipewire
+1. 设置 → 网络 → ID/中继服务器：填和 serve 端相同的 ID 服务器、中继、Key（服务商需要的话再填 API 并登录账号）。
+2. **推荐用命令行带密码打开隧道：**
+
+   ```bash
+   # Flutter 客户端（1.2+）
+   rustdesk.exe --port-forward <ID> --password <设备密码>
+   # 旧版 Sciter 客户端（位置参数）
+   rustdesk.exe --port-forward <ID> <设备密码>
+   ```
+3. 在隧道窗口里**添加**映射：本地 `2222` → `localhost:22`，窗口保持打开。
+4. `ssh -p 2222 <user>@127.0.0.1`。
+
+为什么主界面选「TCP 隧道」不弹密码框：
+
+- 选「TCP 隧道」打开窗口时**不会**马上要密码；要等添加了映射、并且有本地程序连上本地端口，才会去连对端。
+- `rustdesk-pf serve` **只接受端口转发（PortForward）登录**，普通远程桌面「连接」会被拒绝，所以没法先普通连接一次把密码存下来。
+- 客户端会先用空密码 / 已存密码去试，serve 回 *Wrong Password* 后连接关闭，在 GUI 里手动输入密码不稳定。所以请用上面的 `--password`。
+
+## 并发
+
+- 官方客户端和 `rustdesk-pf connect` 可以同时连同一个 serve，互不冲突。
+- 官方客户端的「端口转发复用（mux）」探测会得到 no mux，自动退回每个 TCP 连接一条隧道（关掉 mux 也可以）。
+- 一个映射上可以同时跑多个 SSH 会话；走慢中继时每条新连接可能要等几秒到十几秒（实测 10–20 秒）才建立，建立后可以同时使用。
+
+## 部署
+
+### systemd（专用非 root 用户）
+
+```bash
+sudo useradd --system --home /var/lib/rustdesk-pf --shell /usr/sbin/nologin rustdesk-pf
+sudo install -d -m700 /etc/rustdesk-pf
+sudo install -m600 deploy/rustdesk-pf.env.example /etc/rustdesk-pf/rustdesk-pf.env
+sudoedit /etc/rustdesk-pf/rustdesk-pf.env        # server、key、relay、password
+sudo install -m644 deploy/rustdesk-pf.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now rustdesk-pf
+journalctl -u rustdesk-pf -f                     # 看到 "id=..." 和 "RegisterPk OK"
+sudo -u rustdesk-pf RUSTDESK_PF_CONFIG=/var/lib/rustdesk-pf rustdesk-pf id
 ```
 
-### Install vcpkg
+ID 保存在状态目录里，重启不变。程序每隔几秒重新注册，网络出错后会自己重启注册循环；崩溃由 systemd `Restart=always` 兜底。
 
-```sh
-git clone https://github.com/microsoft/vcpkg
-cd vcpkg
-git checkout 2023.04.15
-cd ..
-vcpkg/bootstrap-vcpkg.sh
-export VCPKG_ROOT=$HOME/vcpkg
-vcpkg/vcpkg install libvpx libyuv opus aom
+### 旧 glibc 主机：musl 静态编译
+
+```bash
+sudo apt install musl-tools            # 提供 musl-gcc（.cargo/config.toml 会用到）
+rustup target add x86_64-unknown-linux-musl
+cargo build -p rustdesk-pf --release --target x86_64-unknown-linux-musl
+file target/x86_64-unknown-linux-musl/release/rustdesk-pf   # 显示 "statically linked"
 ```
 
-### Fix libvpx (For Fedora)
+OpenSSL 以 vendored 方式编进程序，目标机不需要 libssl，也不依赖系统 glibc 版本。`.cargo/config.toml` 里的 musl 设置只在指定 musl target 时生效，普通编译不受影响。
 
-```sh
-cd vcpkg/buildtrees/libvpx/src
-cd *
-./configure
-sed -i 's/CFLAGS+=-I/CFLAGS+=-fPIC -I/g' Makefile
-sed -i 's/CXXFLAGS+=-I/CXXFLAGS+=-fPIC -I/g' Makefile
-make
-cp libvpx.a $HOME/vcpkg/installed/x64-linux/lib/
-cd
+### 无 sudo 用户态部署
+
+```bash
+scp target/x86_64-unknown-linux-musl/release/rustdesk-pf deploy/rustdesk-pf-user.sh user@host:
+ssh user@host
+mkdir -p ~/bin ~/.config/rustdesk-pf && install -m755 rustdesk-pf ~/bin/
+install -m600 /dev/null ~/.config/rustdesk-pf/rustdesk-pf.env
+$EDITOR ~/.config/rustdesk-pf/rustdesk-pf.env    # 参考 deploy/rustdesk-pf.env.example
+sh rustdesk-pf-user.sh restart                   # nohup 方式；还支持 start|stop|status|log
 ```
 
-### Build
+脚本会加载 env 文件，设置 `RUSTDESK_PF_CONFIG=~/.config/rustdesk-pf/state`，日志写到 `~/.config/rustdesk-pf/serve.log`。如果有 `systemd --user`，也可以把 `deploy/rustdesk-pf.service` 拷到 `~/.config/systemd/user/`（删掉 `User=`，把 `EnvironmentFile` / `ExecStart` 改成上面的路径），然后 `systemctl --user enable --now rustdesk-pf`；要退出登录后继续运行，执行 `loginctl enable-linger`。
 
-```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-git clone --recurse-submodules https://github.com/rustdesk/rustdesk
-cd rustdesk
-mkdir -p target/debug
-wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/libsciter-gtk.so
-mv libsciter-gtk.so target/debug
-VCPKG_ROOT=$HOME/vcpkg cargo run
-```
+## 校园网 / 受限网络
 
-## How to build with Docker
+- **只需出站**：serve 需要能出站访问 ID 端口（UDP+TCP）和中继端口（TCP），不需要入站端口和 UPnP。UDP 被封的话注册会失败（标准 hbbs 只通过 UDP 接收 RegisterPk）。
+- **Fake-ip DNS**（Clash/sing-box TUN、部分校园 DNS）会把域名解析到 `198.18.x.x`，导致 RustDesk 自身的 TCP/UDP 失败。`--server` / `--relay` 请填服务商的**真实 IP**；HTTPS API 用 `--api <IP>` 加 `--api-host <域名>`。真实 IP 可以用 DoH 查：`curl -s 'https://dns.google/resolve?name=HOST&type=A'`。
+- 自建 / 商业服务器经常把**中继放在别的主机**（不是 ID 端口 +1）。中继连不上时问服务商，或在 `RUST_LOG=info` 日志的 `PunchHoleResponse` 行里找 `relay=`，再用 `--relay` 指定。
+- 两边都在 NAT 后面时打洞很少成功，会自动走中继。
 
-Begin by cloning the repository and building the Docker container:
+## 安全
 
-```sh
-git clone https://github.com/rustdesk/rustdesk
-cd rustdesk
-git submodule update --init --recursive
-docker build -t "rustdesk-builder" .
-```
+- 设备密码是互联网和这台服务器能访问的所有端口之间唯一的屏障。请用足够长的随机密码，放在权限 600 的 env 文件里，不要写在命令行参数里。
+- 设计上允许转发到整个局域网。不想这样的话，把服务器放在合适的网段，或用防火墙限制 `rustdesk-pf` 用户（`iptables -m owner --uid-owner rustdesk-pf`）只能访问指定主机和端口。
+- 用专用的非特权用户运行（见上面的 systemd 部署），永远不需要 root。
+- 被转发的 sshd 建议用密钥登录并设 `PasswordAuthentication no`。隧道本身是加密的，但仍应把它当成一条通往 sshd 的普通路径对待。
+- API 账号密码 / token 放 env 文件，或用 `rustdesk-pf login`（token 存在状态目录）。不要提交到仓库。
 
-Then, each time you need to build the application, run the following command:
+## 限制
 
-```sh
-docker run --rm -it -v $PWD:/home/user/rustdesk -v rustdesk-git-cache:/home/user/.cargo/git -v rustdesk-registry-cache:/home/user/.cargo/registry -e PUID="$(id -u)" -e PGID="$(id -g)" rustdesk-builder
-```
+- 不支持：远程桌面、文件传输、音频、剪贴板、UDP 转发、RDP 启动器，以及 serve 端的 mux 隧道（客户端会自动退回）。
+- 未实现 UDP/KCP、IPv6 和 WebRTC 打洞；已实现 TCP 打洞、同局域网直连和中继。
+- 中继带宽取决于服务商；有的中继每条连接只有几十 KB/s，SSH 够用，大文件传输会很慢。
 
-Note that the first build may take longer before dependencies are cached, subsequent builds will be faster. Additionally, if you need to specify different arguments to the build command, you may do so at the end of the command in the `<OPTIONAL-ARGS>` position. For instance, if you wanted to build an optimized release version, you would run the command above followed by `--release`. The resulting executable will be available in the target folder on your system, and can be run with:
+## English
 
-```sh
-target/debug/rustdesk
-```
+`rustdesk-pf` is a headless TCP port-forwarding tool extracted from RustDesk. It speaks the same rendezvous/relay/login protocol and encryption, tries TCP hole punching / LAN direct first and falls back to the relay. `serve` registers an ID and accepts port-forward sessions (from the official client or `rustdesk-pf connect`); `connect` works like `ssh -L`. With the official client use `rustdesk --port-forward <ID> --password <PW>`: choosing "TCP tunneling" in the GUI doesn't prompt for a password until a mapping is used, and `serve` only accepts PortForward logins (a normal Connect is rejected). See the sections above for env vars, systemd / no-sudo deployment and the musl static build.
 
-Or, if you're running a release executable:
+## 许可证 / License
 
-```sh
-target/release/rustdesk
-```
-
-Please ensure that you run these commands from the root of the RustDesk repository, or the application may not find the required resources. Also note that other cargo subcommands such as `install` or `run` are not currently supported via this method as they would install or run the program inside the container instead of the host.
-
-## File Structure
-
-- **[libs/hbb_common](https://github.com/rustdesk/rustdesk/tree/master/libs/hbb_common)**: video codec, config, tcp/udp wrapper, and some other utility functions shared with the server
-- **[libs/base](https://github.com/rustdesk/rustdesk/tree/master/libs/base)**: protobuf, fs functions for file transfer, keyboard and platform code used only by this app
-- **[libs/scrap](https://github.com/rustdesk/rustdesk/tree/master/libs/scrap)**: screen capture
-- **[libs/enigo](https://github.com/rustdesk/rustdesk/tree/master/libs/enigo)**: platform specific keyboard/mouse control
-- **[libs/clipboard](https://github.com/rustdesk/rustdesk/tree/master/libs/clipboard)**: file copy and paste implementation for Windows, Linux, macOS.
-- **[src/ui](https://github.com/rustdesk/rustdesk/tree/master/src/ui)**: obsolete Sciter UI (deprecated)
-- **[src/server](https://github.com/rustdesk/rustdesk/tree/master/src/server)**: audio/clipboard/input/video services, and network connections
-- **[src/client.rs](https://github.com/rustdesk/rustdesk/tree/master/src/client.rs)**: start a peer connection
-- **[src/rendezvous_mediator.rs](https://github.com/rustdesk/rustdesk/tree/master/src/rendezvous_mediator.rs)**: Communicate with [rustdesk-server](https://github.com/rustdesk/rustdesk-server), wait for remote direct (TCP hole punching) or relayed connection
-- **[src/platform](https://github.com/rustdesk/rustdesk/tree/master/src/platform)**: platform specific code
-- **[flutter](https://github.com/rustdesk/rustdesk/tree/master/flutter)**: Flutter code for desktop and mobile
-
-## Screenshots
-
-![Connection Manager](https://github.com/rustdesk/rustdesk/assets/28412477/db82d4e7-c4bc-4823-8e6f-6af7eadf7651)
-
-![Connected to a Windows PC](https://github.com/rustdesk/rustdesk/assets/28412477/9baa91e9-3362-4d06-aa1a-7518edcbd7ea)
-
-![File Transfer](https://github.com/rustdesk/rustdesk/assets/28412477/39511ad3-aa9a-4f8c-8947-1cce286a46ad)
-
-![TCP Tunneling](https://github.com/rustdesk/rustdesk/assets/28412477/78e8708f-e87e-4570-8373-1360033ea6c5)
-
+AGPL-3.0，见 [LICENCE](LICENCE)。本项目衍生自 [RustDesk](https://github.com/rustdesk/rustdesk)（© RustDesk 作者），感谢原项目。This project is derived from RustDesk and keeps its AGPL-3.0 license.
