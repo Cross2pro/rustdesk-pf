@@ -7217,6 +7217,7 @@ dependencies = [
  "hbb_common",
  "lazy_static",
  "log",
+ "openssl",
  "protobuf",
  "reqwest",
  "serde 1.0.228",

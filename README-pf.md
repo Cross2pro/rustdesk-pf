@@ -45,6 +45,34 @@ Every flag has an environment variable:
 
 Logs go to stderr (`RUST_LOG=info` default; `debug` for detail), so journald collects them.
 
+## Older-glibc hosts: static musl build / 旧 glibc 主机静态编译
+
+```bash
+sudo apt install musl-tools            # provides musl-gcc (used by .cargo/config.toml)
+rustup target add x86_64-unknown-linux-musl
+cargo build -p rustdesk-pf --release --target x86_64-unknown-linux-musl
+file target/x86_64-unknown-linux-musl/release/rustdesk-pf   # "statically linked"
+```
+
+OpenSSL is vendored (`openssl` feature `vendored`), so the binary needs no host libssl/glibc.
+
+### Non-root user-mode deploy / 无 sudo 用户态部署
+
+```bash
+scp target/x86_64-unknown-linux-musl/release/rustdesk-pf deploy/rustdesk-pf-user.sh user@host:
+ssh user@host
+mkdir -p ~/bin ~/.config/rustdesk-pf && install -m755 rustdesk-pf ~/bin/
+install -m600 /dev/null ~/.config/rustdesk-pf/rustdesk-pf.env
+$EDITOR ~/.config/rustdesk-pf/rustdesk-pf.env    # see deploy/rustdesk-pf.env.example
+sh rustdesk-pf-user.sh restart                   # nohup; also: start|stop|status|log
+```
+
+The script exports the env file, sets `RUSTDESK_PF_CONFIG=~/.config/rustdesk-pf/state`
+and logs to `~/.config/rustdesk-pf/serve.log`. With `systemd --user` available you can
+instead copy `deploy/rustdesk-pf.service` to `~/.config/systemd/user/` (drop `User=`,
+point `EnvironmentFile`/`ExecStart` at the paths above) and run
+`systemctl --user enable --now rustdesk-pf` (`loginctl enable-linger` to survive logout).
+
 ## Controlled server (systemd, non-root)
 
 ```bash
@@ -62,19 +90,38 @@ The ID is kept in the state dir and survives restarts. The daemon re-registers e
 few seconds and restarts its register loop after network errors. systemd `Restart=always`
 covers crashes.
 
-## Connecting with the official RustDesk client
+## Connecting with the official RustDesk client / 官方客户端
 
-1. Settings → Network → ID/Relay server: put in the same ID server, relay, key (and API +
-   account login if your provider requires it).
-2. Enter the server's ID → **TCP tunneling** (port forward) → password.
-3. Add a mapping, e.g. local `2222` → remote `127.0.0.1:22`.
-4. `ssh -p 2222 user@127.0.0.1`.
+1. Settings → Network → ID/Relay server: same ID server, relay, key (and API + account
+   login if your provider requires it).
+2. **Recommended — pass the password on the command line / 推荐用命令行带密码打开：**
 
-Both official modes work: the default "port-forward mux" probe (serve answers
-"no mux" and the client falls back to a raw pipe per connection) and mux off.
-Several SSH sessions through one mapping run at the same time. In this fallback mode the
-official client sets up new connections one at a time, so with a slow relay each new
-`ssh` can take a few seconds to start.
+   ```bash
+   # Flutter client (1.2+)
+   rustdesk.exe --port-forward <ID> --password <DEVICE_PASSWORD>
+   # older Sciter client (positional form)
+   rustdesk.exe --port-forward <ID> <DEVICE_PASSWORD>
+   ```
+3. In the tunnel window **Add** a mapping: local `2222` → `localhost:22`. Keep the window open.
+4. `ssh -p 2222 <user>@127.0.0.1`.
+
+Why not the GUI password box? / 为什么 GUI 不弹密码框：
+
+- Choosing **TCP tunneling** from the main window does *not* prompt for a password when the
+  window opens. The prompt only appears after a mapping is added *and* a local app
+  connects to the local port. 选「TCP 隧道」时不会立刻要密码；要等添加映射且本地有程序连上来才弹。
+- `rustdesk-pf serve` accepts **only PortForward logins**; a normal remote-desktop
+  *Connect* is rejected, so you cannot "connect first to save the password".
+  本服务只接受端口转发登录，普通「连接」会被拒，无法先连接一次保存密码。
+- The client first tries an empty/saved password; serve answers *Wrong Password* and closes,
+  so manual entry in the GUI can be flaky. Use `--password` as above.
+  客户端先用空密码试，被拒后连接关闭，GUI 手动输入不稳定，建议用 `--password`。
+
+Concurrency / 并发: the official client and `rustdesk-pf connect` can be connected to the
+same serve at the same time without conflict. The client's "port-forward mux" probe gets
+"no mux" and falls back to one tunnel per TCP connection (mux off also works). Several SSH
+sessions through one mapping run simultaneously; on a slow relay each new connection may
+take several seconds (observed 10–20 s) to open.
 
 ## Connecting with rustdesk-pf
 
