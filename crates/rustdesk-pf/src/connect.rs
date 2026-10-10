@@ -3,7 +3,7 @@
 use crate::{peer, secure, session};
 use anyhow::{bail, Context, Result};
 use hbb_common::{
-    config::{Config, CONNECT_TIMEOUT, READ_TIMEOUT, RELAY_PORT, RENDEZVOUS_PORT},
+    config::{Config, LocalConfig, CONNECT_TIMEOUT, READ_TIMEOUT, RELAY_PORT, RENDEZVOUS_PORT},
     protobuf::Message as _,
     rendezvous_proto::*,
     socket_client::{self, connect_tcp},
@@ -14,6 +14,11 @@ use tokio::net::TcpListener;
 use uuid::Uuid;
 
 type Rmsg = RendezvousMessage;
+
+fn access_token() -> String {
+    LocalConfig::get_option("access_token")
+}
+
 
 #[derive(Debug, Clone)]
 pub struct Forward {
@@ -144,8 +149,13 @@ async fn punch_then_maybe_relay(peer_id: &str, rendezvous: &str, key: &str) -> R
     let _ = secure::secure_tcp(&mut socket, key).await;
 
     let mut msg_out = Rmsg::new();
+    let token = access_token();
+    if token.is_empty() {
+        log::warn!("no access_token — custom servers may reject PunchHole (login with --user/--api)");
+    }
     msg_out.set_punch_hole_request(PunchHoleRequest {
         id: peer_id.to_owned(),
+        token: token.clone(),
         licence_key: key.to_owned(),
         conn_type: ConnType::PORT_FORWARD.into(),
         version: peer::version().to_owned(),
@@ -153,7 +163,7 @@ async fn punch_then_maybe_relay(peer_id: &str, rendezvous: &str, key: &str) -> R
         ..Default::default()
     });
     socket.send(&msg_out).await?;
-    log::info!("sent PunchHoleRequest to {peer_id}");
+    log::info!("sent PunchHoleRequest to {peer_id} token_len={}", token.len());
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
     loop {
@@ -241,12 +251,14 @@ async fn request_relay_with_server(
     let uuid = Uuid::new_v4().to_string();
     let relay_server = socket_client::check_port(relay_server, RELAY_PORT);
     let mut msg_out = Rmsg::new();
+    let token = access_token();
     msg_out.set_request_relay(RequestRelay {
         id: peer_id.to_owned(),
         uuid: uuid.clone(),
         relay_server: relay_server.clone(),
         secure: true,
         licence_key: key.to_owned(),
+        token: token.clone(),
         conn_type: ConnType::PORT_FORWARD.into(),
         ..Default::default()
     });

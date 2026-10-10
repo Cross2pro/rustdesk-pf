@@ -83,3 +83,17 @@ pub fn print_id_info() {
     println!("enable-tunnel={}", Config::get_option("enable-tunnel"));
     println!("config_dir={}", Config::path("").display());
 }
+
+pub fn set_api(api: &str) {
+    let api = api.trim_end_matches('/').to_string();
+    Config::set_option("api-server".into(), api);
+}
+
+pub fn set_api_host(host: &str) {
+    Config::set_option("api-host".into(), host.to_string());
+}
+
+pub fn set_access_token(token: &str) {
+    use hbb_common::config::LocalConfig;
+    LocalConfig::set_option("access_token".into(), token.to_string());
+}
