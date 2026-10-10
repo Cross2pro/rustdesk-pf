@@ -169,39 +169,42 @@ async fn punch_then_maybe_relay(peer_id: &str, rendezvous: &str, key: &str) -> R
         let msg = Rmsg::parse_from_bytes(&bytes)?;
         match msg.union {
             Some(rendezvous_message::Union::PunchHoleResponse(ph)) => {
-                if let Ok(f) = ph.failure.enum_value() { log::warn!("PunchHoleResponse failure={f:?}"); } if !ph.other_failure.is_empty() {
-                    // Failure is an enum in newer protos
-                    log::warn!("PunchHoleResponse failure={:?}", ph.failure);
+                if !ph.other_failure.is_empty() {
+                    bail!("punch failure: {}", ph.other_failure);
                 }
-                let signed_pk: Vec<u8> = ph.pk.into();
+                // Only treat Failure as error when socket_addr is empty (real failure responses).
                 let peer_addr = hbb_common::AddrMangle::decode(&ph.socket_addr);
-                log::info!("PunchHoleResponse peer={peer_addr:?}");
-                if peer_addr.port() > 0 {
-                    match connect_tcp(format!("{}", peer_addr), CONNECT_TIMEOUT).await {
-                        Ok(mut conn) => {
-                            peer::secure_connection_controller(peer_id, &signed_pk, key, &mut conn)
-                                .await?;
-                            return Ok(conn);
-                        }
-                        Err(e) => {
-                            log::warn!("direct connect failed: {e:#}");
-                            if !ph.relay_server.is_empty() {
-                                return finish_relay(
-                                    peer_id,
-                                    &ph.relay_server,
-                                    &Uuid::new_v4().to_string(),
-                                    key,
-                                    &signed_pk,
-                                )
-                                .await;
-                            }
-                            bail!("direct failed and no relay");
-                        }
+                if peer_addr.port() == 0 {
+                    if let Ok(f) = ph.failure.enum_value() {
+                        bail!("punch failure: {f:?}");
                     }
+                    bail!("punch response with empty peer addr");
                 }
-                if !ph.relay_server.is_empty() {
-                    return request_relay_with_server(peer_id, rendezvous, &ph.relay_server, key)
-                        .await;
+                let signed_pk: Vec<u8> = ph.pk.clone().into();
+                let is_local = ph.is_local();
+                let timeout_ms = if is_local { 3_000 } else { CONNECT_TIMEOUT };
+                log::info!(
+                    "PunchHoleResponse peer={peer_addr:?} is_local={is_local} relay={}",
+                    ph.relay_server
+                );
+                match socket_client::connect_tcp_local(peer_addr, None, timeout_ms).await {
+                    Ok(mut conn) => {
+                        log::info!("direct TCP connected to {peer_addr} (punch/intranet)");
+                        peer::secure_connection_controller(peer_id, &signed_pk, key, &mut conn)
+                            .await?;
+                        return Ok(conn);
+                    }
+                    Err(e) => {
+                        log::warn!("direct connect to {peer_addr} failed: {e:#}");
+                        if !ph.relay_server.is_empty() {
+                            log::info!("falling back to relay {}", ph.relay_server);
+                            return request_relay_with_server(
+                                peer_id, rendezvous, &ph.relay_server, key,
+                            )
+                            .await;
+                        }
+                        bail!("direct failed and no relay_server in punch response");
+                    }
                 }
             }
             Some(rendezvous_message::Union::RelayResponse(rr)) => {

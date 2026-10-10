@@ -8,6 +8,7 @@ use hbb_common::{
     rendezvous_proto::*,
     sleep,
     socket_client::{self, connect_tcp, new_udp_for},
+    tcp::new_listener,
     tokio::{select, time::interval},
     AddrMangle, Stream,
 };
@@ -135,6 +136,8 @@ async fn handle_udp(
                     Config::update_id();
                     let _ = Config::get_key_pair();
                     setup::print_id_info();
+                    // Re-register immediately rather than waiting for REG_INTERVAL.
+                    send_register_udp(socket, addr, host_prefix).await?;
                 }
                 other => log::error!("RegisterPkResponse: {other:?}"),
             }
@@ -167,44 +170,28 @@ async fn handle_udp(
         Some(rendezvous_message::Union::PunchHole(ph)) => {
             let peer = AddrMangle::decode(&ph.socket_addr);
             log::info!(
-                "PunchHole from {:?} relay={} — trying relay accept",
+                "PunchHole from {:?} relay={} force_relay={}",
                 peer,
-                ph.relay_server
+                ph.relay_server,
+                ph.force_relay
             );
-            // Same-box / hard NAT: fall back to relay using uuid from punch if present.
-            // Full TCP punch is TODO; for now if relay_server is set, initiate relay.
-            if !ph.relay_server.is_empty() {
-                let host = host.to_string();
-                let key = secure::rs_key();
-                let uuid = uuid::Uuid::new_v4().to_string();
-                tokio::spawn(async move {
-                    let rr = RequestRelay {
-                        uuid,
-                        relay_server: ph.relay_server,
-                        socket_addr: ph.socket_addr,
-                        secure: true,
-                        ..Default::default()
-                    };
-                    // initiate=true path
-                    if let Err(e) = initiate_relay(host, rr, key).await {
-                        log::error!("punch→relay failed: {e:#}");
-                    }
-                });
-            }
+            let host = host.to_string();
+            let key = secure::rs_key();
+            tokio::spawn(async move {
+                if let Err(e) = handle_punch_hole(host, ph, key).await {
+                    log::error!("handle_punch_hole failed: {e:#}");
+                }
+            });
         }
         Some(rendezvous_message::Union::FetchLocalAddr(fla)) => {
             let peer = AddrMangle::decode(&fla.socket_addr);
-            log::info!("FetchLocalAddr from {:?} (intranet); answering with LocalAddr", peer);
-            let mut msg_out = Message::new();
-            // Tell peer our local TCP listener is not used; relay is preferred for pf-cli.
-            // Minimal LocalAddr so client can proceed — leave empty to force relay on client.
-            msg_out.set_local_addr(LocalAddr {
-                socket_addr: fla.socket_addr,
-                relay_server: Config::get_option("relay-server"),
-                id: Config::get_id(),
-                ..Default::default()
+            log::info!("FetchLocalAddr from {:?} (same intranet) — listen for direct TCP", peer);
+            let host = host.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = handle_intranet(host, fla).await {
+                    log::error!("handle_intranet failed: {e:#}");
+                }
             });
-            socket.send(&msg_out, addr.to_owned()).await?;
         }
         other => log::debug!("udp msg: {other:?}"),
     }
@@ -277,3 +264,111 @@ async fn initiate_relay(hbbs_host: String, rr: RequestRelay, key: String) -> Res
     peer::identity_handshake_controlled(&mut stream, true).await?;
     session::run_controlled_port_forward(stream).await
 }
+
+
+/// Same-intranet: notify hbbs of our listen addr, then accept the controller's direct TCP.
+async fn handle_intranet(hbbs_host: String, fla: FetchLocalAddr) -> Result<()> {
+    let peer_addr = AddrMangle::decode(&fla.socket_addr);
+    let mut notify = connect_tcp(&*hbbs_host, CONNECT_TIMEOUT).await?;
+    let local_addr = notify.local_addr();
+    let relay_server = if fla.relay_server.is_empty() {
+        Config::get_option("relay-server")
+    } else {
+        fla.relay_server.clone()
+    };
+    let mut msg_out = Message::new();
+    msg_out.set_local_addr(LocalAddr {
+        id: Config::get_id(),
+        socket_addr: fla.socket_addr,
+        local_addr: AddrMangle::encode(local_addr).into(),
+        relay_server,
+        version: peer::version().to_owned(),
+        ..Default::default()
+    });
+    notify.send(&msg_out).await?;
+    log::info!("sent LocalAddr local={local_addr:?} for peer {peer_addr:?}");
+    // Drop the hbbs notify socket and re-bind the same local_addr with SO_REUSEADDR.
+    drop(notify);
+    let listener = new_listener(local_addr, true).await?;
+    log::info!("intranet listening on {}", listener.local_addr()?);
+    match hbb_common::timeout(CONNECT_TIMEOUT, listener.accept()).await {
+        Ok(Ok((stream, addr))) => {
+            log::info!("intranet accept from {addr} (direct)");
+            stream.set_nodelay(true).ok();
+            let stream_addr = stream.local_addr()?;
+            let mut stream = Stream::from(stream, stream_addr);
+            peer::identity_handshake_controlled(&mut stream, true).await?;
+            session::run_controlled_port_forward(stream).await
+        }
+        Ok(Err(e)) => bail!("intranet accept error: {e}"),
+        Err(_) => bail!("intranet accept timeout — controller did not connect"),
+    }
+}
+
+/// Cross-NAT PunchHole: TCP punch attempt, then fall back to initiating relay.
+async fn handle_punch_hole(hbbs_host: String, ph: PunchHole, key: String) -> Result<()> {
+    let peer_addr = AddrMangle::decode(&ph.socket_addr);
+    let relay_server = if ph.relay_server.is_empty() {
+        Config::get_option("relay-server")
+    } else {
+        ph.relay_server.clone()
+    };
+
+    if ph.force_relay {
+        log::info!("force_relay set; initiating relay");
+        let rr = RequestRelay {
+            uuid: uuid::Uuid::new_v4().to_string(),
+            relay_server: relay_server.clone(),
+            socket_addr: ph.socket_addr.clone(),
+            secure: true,
+            ..Default::default()
+        };
+        return initiate_relay(hbbs_host, rr, key).await;
+    }
+
+    // TCP punch: connect to hbbs (PunchHoleSent), try outbound to peer, listen on local port.
+    let mut notify = connect_tcp(&*hbbs_host, CONNECT_TIMEOUT).await?;
+    let local_addr = notify.local_addr();
+    let punch = socket_client::connect_tcp_local(peer_addr, Some(local_addr), 500);
+    let _ = hbb_common::timeout(800, punch).await;
+
+    let mut msg_out = Message::new();
+    msg_out.set_punch_hole_sent(PunchHoleSent {
+        socket_addr: ph.socket_addr.clone(),
+        id: Config::get_id(),
+        relay_server: relay_server.clone(),
+        version: peer::version().to_owned(),
+        ..Default::default()
+    });
+    notify.send(&msg_out).await?;
+    log::info!("sent PunchHoleSent; listening on {local_addr:?} for {peer_addr:?}");
+    drop(notify);
+
+    let listener = new_listener(local_addr, true).await?;
+    match hbb_common::timeout(CONNECT_TIMEOUT, listener.accept()).await {
+        Ok(Ok((stream, addr))) => {
+            log::info!("TCP punch accept from {addr} (direct)");
+            stream.set_nodelay(true).ok();
+            let stream_addr = stream.local_addr()?;
+            let mut stream = Stream::from(stream, stream_addr);
+            peer::identity_handshake_controlled(&mut stream, true).await?;
+            return session::run_controlled_port_forward(stream).await;
+        }
+        Ok(Err(e)) => log::warn!("punch accept error: {e}"),
+        Err(_) => log::warn!("punch accept timeout"),
+    }
+
+    if !relay_server.is_empty() {
+        log::info!("punch listen missed; initiating relay fallback");
+        let rr = RequestRelay {
+            uuid: uuid::Uuid::new_v4().to_string(),
+            relay_server,
+            socket_addr: ph.socket_addr,
+            secure: true,
+            ..Default::default()
+        };
+        return initiate_relay(hbbs_host, rr, key).await;
+    }
+    bail!("punch failed and no relay_server")
+}
+
