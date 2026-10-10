@@ -14,7 +14,7 @@ path = "src/main.rs"
 hbb_common = { path = "../../libs/hbb_common" }
 # message.proto lives in base; base pulls wayland on Linux (NOT gtk/glib).
 base = { path = "../../libs/base" }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1.44", features = ["full"] }
 anyhow = "1"
 log = "0.4"

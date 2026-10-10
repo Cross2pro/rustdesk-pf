@@ -358,17 +358,10 @@ async fn handle_punch_hole(hbbs_host: String, ph: PunchHole, key: String) -> Res
         Err(_) => log::warn!("punch accept timeout"),
     }
 
-    if !relay_server.is_empty() {
-        log::info!("punch listen missed; initiating relay fallback");
-        let rr = RequestRelay {
-            uuid: uuid::Uuid::new_v4().to_string(),
-            relay_server,
-            socket_addr: ph.socket_addr,
-            secure: true,
-            ..Default::default()
-        };
-        return initiate_relay(hbbs_host, rr, key).await;
-    }
-    bail!("punch failed and no relay_server")
+    // The controller falls back to RequestRelay itself (as upstream does); opening a second
+    // relay leg here with our own uuid would race it and leave an orphan session on hbbr.
+    let _ = (relay_server, key);
+    log::info!("punch to {peer_addr} not met; controller will relay");
+    Ok(())
 }
 

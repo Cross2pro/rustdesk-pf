@@ -80,8 +80,10 @@ pub async fn run_controlled_port_forward(mut stream: Stream) -> Result<()> {
 
     loop {
         let res = timeout(READ_TIMEOUT, stream.next()).await?;
-        let Some(Ok(bytes)) = res else {
-            bail!("peer closed before login");
+        let bytes = match res {
+            Some(Ok(b)) => b,
+            Some(Err(e)) => bail!("read before login failed: {e}"),
+            None => bail!("peer closed before login"),
         };
         let msg_in = Message::parse_from_bytes(&bytes)?;
         match msg_in.union {

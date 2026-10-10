@@ -1,0 +1,27 @@
+[Unit]
+Description=rustdesk-pf headless port-forward endpoint (controlled side)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rustdesk-pf
+Group=rustdesk-pf
+EnvironmentFile=/etc/rustdesk-pf/rustdesk-pf.env
+Environment=RUSTDESK_PF_CONFIG=/var/lib/rustdesk-pf
+Environment=RUST_LOG=info
+ExecStart=/usr/local/bin/rustdesk-pf serve
+Restart=always
+RestartSec=5
+# Hardening: outbound-only daemon, no privileges needed.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+StateDirectory=rustdesk-pf
+ReadWritePaths=/var/lib/rustdesk-pf
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
