@@ -34,6 +34,8 @@ rustdesk-pf connect <ID> -L 127.0.0.1:2222:127.0.0.1:22
 ssh -p 2222 <user>@127.0.0.1
 ```
 
+> 想让目标机器上的 AI agent（智能体）自动装好被控端？把 [docs/agent-setup-prompt.md](docs/agent-setup-prompt.md) 里的提示词复制给它即可。
+
 ## 配置 / 环境变量
 
 每个参数都有对应的环境变量，部署时建议全部写进权限 600 的 env 文件，不要放在命令行里。
