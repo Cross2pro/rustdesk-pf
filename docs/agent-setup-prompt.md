@@ -37,20 +37,20 @@
 
 【4. 登录并前台试跑】
 - 状态目录（RUSTDESK_PF_CONFIG，存 ID、密钥、token）必须和常驻服务用的一致：
-  - systemd 方式：/var/lib/rustdesk-pf（以 rustdesk-pf 用户运行，见第 5 步，先建用户）；
+  - systemd 方式：/var/lib/rustdesk-pf（以 rustdesk-pf 用户运行，先建用户）；
   - 免 sudo 方式：~/.config/rustdesk-pf/state。
 - 加载 env 后登录（login：用账户换取 access_token 访问令牌，服务器要求登录后才允许打洞）：
   set -a; . <env 文件>; set +a; export RUSTDESK_PF_CONFIG=<状态目录>
   rustdesk-pf login
   systemd 方式可由 root 执行，环境变量只在子 shell 里，不会出现在命令行：
+  sudo useradd --system --home /var/lib/rustdesk-pf --shell /usr/sbin/nologin rustdesk-pf
   sudo install -d -m700 /var/lib/rustdesk-pf
   sudo sh -c 'set -a; . /etc/rustdesk-pf/rustdesk-pf.env; set +a; export RUSTDESK_PF_CONFIG=/var/lib/rustdesk-pf; rustdesk-pf login && rustdesk-pf serve'
-  试跑结束后（第 5 步建好 rustdesk-pf 用户后）执行 `sudo chown -R rustdesk-pf:rustdesk-pf /var/lib/rustdesk-pf`，让服务用户能读写 ID 和 token。
+  试跑结束后执行 `sudo chown -R rustdesk-pf:rustdesk-pf /var/lib/rustdesk-pf`，让服务用户能读写 ID 和 token。
 - 前台试跑 `rustdesk-pf serve`，等日志出现 `RegisterPk OK; id=<ID> online`，记下这个 ID。若出现 `UUID_MISMATCH; regenerating id`，ID 会被重新生成，以最后一次 `RegisterPk OK` 的 ID 为准。确认后 Ctrl+C 停止。`rustdesk-pf id` 也能打印当前 ID。
 
 【5. 设为常驻、开机自启】（以解压包或仓库里的 deploy/ 为准）
-- 有 sudo（推荐 systemd）：
-  sudo useradd --system --home /var/lib/rustdesk-pf --shell /usr/sbin/nologin rustdesk-pf
+- 有 sudo（推荐 systemd，rustdesk-pf 用户已在第 4 步建好）：
   sudo install -m644 deploy/rustdesk-pf.service /etc/systemd/system/
   sudo systemctl daemon-reload && sudo systemctl enable --now rustdesk-pf
   （unit 里 EnvironmentFile=/etc/rustdesk-pf/rustdesk-pf.env、RUSTDESK_PF_CONFIG=/var/lib/rustdesk-pf、ExecStart=/usr/local/bin/rustdesk-pf serve；状态目录归属需是 rustdesk-pf 用户。）
