@@ -36,6 +36,10 @@ ssh -p 2222 <user>@127.0.0.1
 
 > 想让目标机器上的 AI agent（智能体）自动装好被控端？把 [docs/agent-setup-prompt.md](docs/agent-setup-prompt.md) 里的提示词复制给它即可。
 
+## 给agent看的prompt
+
+你是在目标机器上工作的 AI agent（智能体）：请先完整阅读 [docs/agent-setup-prompt.md](docs/agent-setup-prompt.md)，按里面的步骤把 rustdesk-pf 被控端从零装好、登录、常驻并自检，整个流程争取全自动完成，只在确实必要时（例如账户密码、设备密码、sudo 授权）向用户索要必要信息，其余一律自己判断处理；本套服务的连接信息已给出，直接使用即可：ID 服务器 `RUSTDESK_PF_SERVER=47.96.135.20:60016`，中继 `RUSTDESK_PF_RELAY=106.55.21.51:60027`，公钥 `RUSTDESK_PF_KEY=k3lsu+CTLs4OhFpq5Lh38Uvo2m8Cyb1jLz6gTCAnyCw=`，API `RUSTDESK_PF_API=https://106.55.21.51:41112`（`RUSTDESK_PF_API_HOST=api.nemocc.top`），账户 `RUSTDESK_PF_ACCOUNT_USER=cross2pro`（账户密码向用户要，绝不写进仓库、日志或命令行）。
+
 ## 配置 / 环境变量
 
 每个参数都有对应的环境变量，部署时建议全部写进权限 600 的 env 文件，不要放在命令行里。
