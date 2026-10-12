@@ -19,15 +19,17 @@
 - 安装：有 sudo 就 `sudo install -m755 rustdesk-pf /usr/local/bin/`；没有 sudo 就 `install -D -m755 rustdesk-pf ~/.local/bin/rustdesk-pf`。
 - 运行 `rustdesk-pf --version` 确认。
 
-【3. 写 env 配置文件（权限 600）】
+【3. 放置 env 配置文件（权限 600）】
+- 首选：用户会直接给你一份写好的 rustdesk-pf.env 配置文件。拿到后原样复制到下面的位置并 `chmod 600`，不要打印、不要改写其中的值，然后跳过本步其余内容。
+- 没有现成文件时，才按下面的模板建文件，占位符全部向用户要。
 - 有 sudo：/etc/rustdesk-pf/rustdesk-pf.env（目录 `sudo install -d -m700 /etc/rustdesk-pf`）。
 - 无 sudo：~/.config/rustdesk-pf/rustdesk-pf.env。
 - 先 `install -m600 /dev/null <文件>` 建空文件再编辑，保证从一开始就是 600。内容：
-  RUSTDESK_PF_SERVER=47.96.135.20:60016
-  RUSTDESK_PF_RELAY=106.55.21.51:60027
-  RUSTDESK_PF_KEY=k3lsu+CTLs4OhFpq5Lh38Uvo2m8Cyb1jLz6gTCAnyCw=
-  RUSTDESK_PF_API=https://106.55.21.51:41112
-  RUSTDESK_PF_API_HOST=api.nemocc.top
+  RUSTDESK_PF_SERVER=<ID服务器IP:端口>
+  RUSTDESK_PF_RELAY=<中继IP:端口>
+  RUSTDESK_PF_KEY=<服务器公钥>
+  RUSTDESK_PF_API=https://<API的IP:端口>
+  RUSTDESK_PF_API_HOST=<API域名>
   RUSTDESK_PF_ACCOUNT_USER=<账户>
   RUSTDESK_PF_ACCOUNT_PASSWORD=<账户密码>
   RUSTDESK_PF_PASSWORD=<设备密码，长随机>
@@ -59,7 +61,7 @@
   开机自启：有 systemd --user 就把 deploy/rustdesk-pf.service 复制到 ~/.config/systemd/user/，删掉 User=/Group= 以及 ProtectHome 等加固行，EnvironmentFile 改成 ~/.config/rustdesk-pf/rustdesk-pf.env 的绝对路径，RUSTDESK_PF_CONFIG 改成 ~/.config/rustdesk-pf/state 的绝对路径，ExecStart 改成二进制绝对路径，然后 `systemctl --user enable --now rustdesk-pf` 并 `loginctl enable-linger $USER`（退出登录后继续运行）；没有 systemd --user 就用 crontab 加 `@reboot RUSTDESK_PF_BIN=<绝对路径> sh <脚本绝对路径> start`。
 
 【6. 自检】
-- 出站连通：`nc -vz 47.96.135.20 60016`、`nc -vz 106.55.21.51 60027`、`nc -vz 106.55.21.51 41112`（或用 curl / bash 的 /dev/tcp）。ID 端口 60016 还需要 UDP 出站（注册走 UDP）。
+- 出站连通：对配置文件里的 ID 服务器、中继、API 三个地址分别 `nc -vz <IP> <端口>`（或用 curl / bash 的 /dev/tcp）。ID 服务器端口还需要 UDP 出站（注册走 UDP）。
 - 运行状态：`systemctl status rustdesk-pf` 和 `journalctl -u rustdesk-pf -n 50`；免 sudo 方式看 `sh deploy/rustdesk-pf-user.sh status` 和 ~/.config/rustdesk-pf/serve.log。日志里应持续有 RegisterPk OK，且没有 "please log in" 之类错误。
 - 重启服务后 ID 应保持不变。
 
