@@ -1,8 +1,3 @@
-# 给 AI agent 的被控端配置提示词
-
-把下面代码块里的整段文字原样复制给目标机器上的 AI agent（智能体，能执行命令的 AI 助手），它会从零装好 `rustdesk-pf` 被控端（serve，被远程连接的一方）：先尝试打洞（hole punch，两端直接建立连接），失败时自动走中继（relay，由中转服务器转发流量）。提示词里的密码都是占位符，agent 会向你索要，**不要把真实密码直接贴进提示词**。
-
-```text
 你的任务：在这台机器上从零安装并配置 rustdesk-pf 被控端（serve），让它常驻运行、开机自启。连接方式是先 TCP 打洞（hole punch，两端直连），不通时自动走中继（relay，中转服务器转发）。请按以下步骤操作，每一步都检查结果。
 
 【1. 判断架构】
@@ -78,4 +73,3 @@
   rustdesk-pf connect <ID> -L 127.0.0.1:2222:127.0.0.1:22
   （控制端需配置同样的 RUSTDESK_PF_SERVER/RELAY/KEY/API/API_HOST/账户变量，并用 RUSTDESK_PF_PEER_PASSWORD 提供设备密码；可选加 --force-relay 强制走中继。连上后 `ssh -p 2222 <user>@127.0.0.1`。）
 - 任何失败的步骤和错误日志（去掉密码/token）。
-```
