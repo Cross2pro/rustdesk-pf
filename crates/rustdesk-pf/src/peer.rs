@@ -111,6 +111,48 @@ pub async fn secure_connection_controller(
     } else {
         rs_key
     };
+    let sign_pk = resolve_sign_pk(peer_id, signed_id_pk, key_str);
+    let Some(sign_pk) = sign_pk else {
+        conn.send(&Message::new()).await?;
+        log::warn!("continuing without peer stream encryption");
+        return Ok(());
+    };
+
+    let Some(res) = timeout(READ_TIMEOUT, conn.next()).await? else {
+        bail!("no SignedId from peer");
+    };
+    let bytes = res?;
+    finish_signed_id_handshake(peer_id, sign_pk, conn, bytes).await
+}
+
+/// Like [`secure_connection_controller`], but the first frame was already read (e.g. after
+/// checking it is not an hbbr RelayResponse refuse).
+pub async fn secure_connection_controller_with_first(
+    peer_id: &str,
+    signed_id_pk: &[u8],
+    rs_key: &str,
+    conn: &mut Stream,
+    first: bytes::BytesMut,
+) -> Result<()> {
+    let key_str = if rs_key.is_empty() {
+        hbb_common::config::RS_PUB_KEY
+    } else {
+        rs_key
+    };
+    let sign_pk = resolve_sign_pk(peer_id, signed_id_pk, key_str);
+    let Some(sign_pk) = sign_pk else {
+        conn.send(&Message::new()).await?;
+        log::warn!("continuing without peer stream encryption");
+        return Ok(());
+    };
+    finish_signed_id_handshake(peer_id, sign_pk, conn, first).await
+}
+
+fn resolve_sign_pk(
+    peer_id: &str,
+    signed_id_pk: &[u8],
+    key_str: &str,
+) -> Option<sign::PublicKey> {
     let mut sign_pk = None;
     if !signed_id_pk.is_empty() {
         if let Some(rs_pk) = get_rs_pk(key_str) {
@@ -126,17 +168,16 @@ pub async fn secure_connection_controller(
             log::error!("could not verify peer identity under rendezvous key");
         }
     }
-    let Some(sign_pk) = sign_pk else {
-        conn.send(&Message::new()).await?;
-        log::warn!("continuing without peer stream encryption");
-        return Ok(());
-    };
+    sign_pk
+}
 
-    let Some(res) = timeout(READ_TIMEOUT, conn.next()).await? else {
-        bail!("no SignedId from peer");
-    };
-    let bytes = res?;
-    let msg_in = Message::parse_from_bytes(&bytes)?;
+async fn finish_signed_id_handshake(
+    peer_id: &str,
+    sign_pk: sign::PublicKey,
+    conn: &mut Stream,
+    bytes: impl AsRef<[u8]>,
+) -> Result<()> {
+    let msg_in = Message::parse_from_bytes(bytes.as_ref())?;
     let Some(message::Union::SignedId(si)) = msg_in.union else {
         log::error!("expected SignedId from peer");
         conn.send(&Message::new()).await?;

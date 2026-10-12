@@ -227,6 +227,20 @@ async fn accept_relay(hbbs_host: String, rr: RequestRelay, key: String) -> Resul
         ..Default::default()
     });
     stream.send(&msg_out).await?;
+    // Commercial hbbr may push RelayResponse{refuse_reason} to the late peer.
+    if let Some(Ok(bytes)) = hbb_common::timeout(300, stream.next()).await.ok().flatten() {
+        if !bytes.is_empty() {
+            if let Ok(msg) = Message::parse_from_bytes(&bytes) {
+                if let Some(rendezvous_message::Union::RelayResponse(rr)) = msg.union {
+                    if !rr.refuse_reason.is_empty() {
+                        bail!("relay refused: {}", rr.refuse_reason);
+                    }
+                }
+            }
+            // Not a refuse — treat as first handshake frame (should not happen; controlled sends first).
+            log::warn!("unexpected {} bytes from relay before SignedId; ignoring", bytes.len());
+        }
+    }
     peer::identity_handshake_controlled(&mut stream, true).await?;
     session::run_controlled_port_forward(stream).await
 }

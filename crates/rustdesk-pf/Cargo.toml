@@ -1,6 +1,6 @@
 [package]
 name = "rustdesk-pf"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Headless RustDesk port-forward CLI (no GUI)"
 authors = ["Cross2pro"]
@@ -33,3 +33,4 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 # Force vendored OpenSSL so musl/static builds do not need host libssl
 openssl = { version = "0.10", features = ["vendored"] }
+

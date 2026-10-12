@@ -130,21 +130,23 @@ async fn establish(peer_id: &str, force_relay: bool) -> Result<Stream> {
     }
     rendezvous = socket_client::check_port(rendezvous, RENDEZVOUS_PORT);
 
-    // Prefer relay for reliability (same machine / NAT). PunchHoleRequest still tried when not forced.
-    if force_relay {
-        return request_relay(peer_id, &rendezvous, &key).await;
-    }
-
-    match punch_then_maybe_relay(peer_id, &rendezvous, &key).await {
+    // Match upstream: even with --force-relay, go through PunchHoleRequest{force_relay=true}
+    // so the controlled side runs initiate_relay. Some commercial hbbr builds reject a naked
+    // controller RequestRelay with RelayResponse{{refuse_reason=请登录…}}.
+    match punch_then_maybe_relay(peer_id, &rendezvous, &key, force_relay).await {
         Ok(s) => Ok(s),
         Err(e) => {
-            log::warn!("punch failed ({e:#}); falling back to relay");
+            if force_relay {
+                log::warn!("force-relay punch path failed ({e:#}); trying direct RequestRelay");
+            } else {
+                log::warn!("punch failed ({e:#}); falling back to relay");
+            }
             request_relay(peer_id, &rendezvous, &key).await
         }
     }
 }
 
-async fn punch_then_maybe_relay(peer_id: &str, rendezvous: &str, key: &str) -> Result<Stream> {
+async fn punch_then_maybe_relay(peer_id: &str, rendezvous: &str, key: &str, force_relay: bool) -> Result<Stream> {
     let mut socket = connect_tcp(rendezvous, CONNECT_TIMEOUT).await?;
     let _ = secure::secure_tcp(&mut socket, key).await;
 
@@ -159,11 +161,14 @@ async fn punch_then_maybe_relay(peer_id: &str, rendezvous: &str, key: &str) -> R
         licence_key: key.to_owned(),
         conn_type: ConnType::PORT_FORWARD.into(),
         version: peer::version().to_owned(),
-        force_relay: false,
+        force_relay,
         ..Default::default()
     });
     socket.send(&msg_out).await?;
-    log::info!("sent PunchHoleRequest to {peer_id} token_len={}", token.len());
+    log::info!(
+        "sent PunchHoleRequest to {peer_id} token_len={} force_relay={force_relay}",
+        token.len()
+    );
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
     loop {
@@ -194,9 +199,27 @@ async fn punch_then_maybe_relay(peer_id: &str, rendezvous: &str, key: &str) -> R
                 let is_local = ph.is_local();
                 let timeout_ms = if is_local { 3_000 } else { CONNECT_TIMEOUT };
                 log::info!(
-                    "PunchHoleResponse peer={peer_addr:?} is_local={is_local} relay={}",
+                    "PunchHoleResponse peer={peer_addr:?} is_local={is_local} relay={} force_relay={force_relay}",
                     ph.relay_server
                 );
+                if force_relay {
+                    // Upstream would wait for controlled initiate_relay, but some commercial
+                    // hbbs strip PunchHole.force_relay (we observe force_relay=false on serve).
+                    // A prior PunchHole still "arms" relay on those servers; a naked RequestRelay
+                    // without punch is refused with 请登录. So punch first, then RequestRelay.
+                    if ph.relay_server.is_empty() {
+                        log::info!("force_relay: empty relay in punch response; waiting");
+                        continue;
+                    }
+                    log::info!(
+                        "force_relay: punch armed; controller RequestRelay via {}",
+                        ph.relay_server
+                    );
+                    return request_relay_with_server(
+                        peer_id, rendezvous, &ph.relay_server, key,
+                    )
+                    .await;
+                }
                 match socket_client::connect_tcp_local(peer_addr, None, timeout_ms).await {
                     Ok(mut conn) => {
                         log::info!("direct TCP connected to {peer_addr} (punch/intranet)");
@@ -319,6 +342,37 @@ async fn finish_relay(
     });
     log::info!("relay RequestRelay sent licence_key_len={}", key.len());
     conn.send(&msg_out).await?;
-    peer::secure_connection_controller(peer_id, signed_pk, key, &mut conn).await?;
+    // Some commercial hbbr builds reply with RelayResponse{{refuse_reason}} instead of
+    // pairing. That frame is still length-prefixed; parsing it as peer Message yields
+    // "Incorrect varint". Peek one frame before the SignedId handshake.
+    finish_relay_after_request(peer_id, signed_pk, key, &mut conn).await?;
     Ok(conn)
+}
+
+async fn finish_relay_after_request(
+    peer_id: &str,
+    signed_pk: &[u8],
+    key: &str,
+    conn: &mut Stream,
+) -> Result<()> {
+    // Race: commercial hbbr may push RelayResponse{{refuse_reason}}; otherwise the peer
+    // sends SignedId. Protobuf is permissive — only treat as refuse when union is
+    // RelayResponse; otherwise always try the peer Message path.
+    let Some(res) = hbb_common::timeout(READ_TIMEOUT, conn.next()).await? else {
+        bail!("relay/peer closed before handshake (no SignedId)");
+    };
+    let bytes = res?;
+    if bytes.is_empty() {
+        bail!("empty frame from relay/peer before handshake");
+    }
+    if let Ok(rmsg) = Rmsg::parse_from_bytes(&bytes) {
+        if let Some(rendezvous_message::Union::RelayResponse(rr)) = rmsg.union {
+            if !rr.refuse_reason.is_empty() {
+                bail!("relay refused: {}", rr.refuse_reason);
+            }
+            // Empty refuse_reason — ignore and try peer parse below.
+            log::debug!("RelayResponse from hbbr without refuse_reason; trying peer handshake");
+        }
+    }
+    peer::secure_connection_controller_with_first(peer_id, signed_pk, key, conn, bytes).await
 }
